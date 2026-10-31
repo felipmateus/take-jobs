@@ -13,60 +13,66 @@ When the stack is up, the first collection starts by itself. After a minute or s
 
 This is **v2**, a rebuild of the original Flask version (tag `v1`) with spec-driven development. See [v1 → v2](#v1--v2) for what changed and why, and [`docs/tasks/fastapi-refactor/`](docs/tasks/fastapi-refactor/) for the PRD, tech spec, ADRs, task files and review rounds.
 
+## Contents
+
+- [Key features](#key-features)
+- [Demo](#demo)
+- [Overview](#overview)
+- [Running](#running)
+- [Querying the API](#querying-the-api)
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
+- [v1 → v2](#v1--v2)
+
+## Key features
+
+- **Daily collection, no setup.** One `docker compose up --build` starts PostgreSQL, the migrations, the API and a cron scheduler. The first collection runs at start when the store is empty.
+- **Only relevant jobs.** Every title goes through include and exclude keywords, so a "programador CNC" or a sales role never reaches the store.
+- **Seniority from the title.** `intern`, `junior`, `mid` or `senior`, ready to filter on.
+- **Fast, forgiving search.** Case and accent insensitive text search over title, company and description, backed by trigram indexes (p95 below 300 ms on 50,000 jobs).
+- **Auditable runs.** Every collection is stored with one result per source and search term, so a partial failure is visible instead of silent.
+- **Safe by construction.** A read-only API, a single active run enforced by the database, no secret in the repository, and about 500 tests in CI.
+
 ## Demo
 
-Captured from a local `docker compose up --build` on 2026-10-31. The startup collection finished in 1 min 09 s: all 24 source and term combinations succeeded, and it stored 162 relevant jobs out of about 1,800 listings scraped.
+Captured from a local `docker compose up --build` on an empty volume on 2026-10-31. The startup collection finished in 1 min 07 s: all 24 source and term combinations succeeded, and it stored 162 relevant jobs out of about 1,800 listings scraped.
+
+### 1. The collection
+
+The scheduler prints one line per source and term, then the run summary. Most of the listings are discarded by the relevance policy: the "programador" term on vagas.com alone returned 775 non-software titles.
+
+```bash
+docker compose logs scheduler --no-log-prefix
+```
+
+![Scheduler output of the startup collection: 24 source and term lines, all ok, ending with "Collection run 1 finished: success in 1m07s (new=162, seen_again=298, discarded=1361)"](docs/images/collection-run-terminal.png)
+
+### 2. Searching the jobs
+
+Filters combine freely. Here, senior developer roles, one per line:
+
+```bash
+curl -s "localhost:8000/jobs?q=desenvolvedor&seniority=senior&size=8" \
+  | jq -r '.items[] | "\(.source)  \(.title | .[:60] | . + " " * (62 - length))\(.location)"'
+```
+
+![Terminal listing eight senior developer jobs from Infojobs with their locations, then the total of 162 stored jobs](docs/images/search-terminal.png)
+
+### 3. The interactive docs
+
+Every route is documented and can be tried at <http://localhost:8000/docs>.
 
 ![Swagger UI at http://localhost:8000/docs listing the jobs, collection runs and health endpoints](docs/images/swagger-ui.png)
 
-Search is accent-insensitive and paginated. `seniority` is classified from the title; `Pleno/Sênior` resolves to `mid`, because the left-most keyword wins.
+`GET /jobs?q=python&size=1` from **Try it out**. Search is accent-insensitive and paginated, and `seniority` is `null` when the title names no level. A title such as `Pleno/Sênior` resolves to `mid`, because the left-most keyword wins.
 
-```console
-$ curl "http://localhost:8000/jobs?q=python&size=2"
-{
-  "items": [
-    {
-      "id": 122,
-      "title": "Desenvolvedor Pleno/Sênior (Python+Node+React)",
-      "company": "SPEED IO – SERVIÇOS ESPECIALIZADOS LTDA",
-      "location": "São Paulo - SP",
-      "description": "Estamos em busca de uma pessoa desenvolvedora com mentalidade hacker, curiosa e com forte capacidade de aprendizado rápido para integrar nosso time de...",
-      "published_label": "14 set",
-      "source": "infojobs",
-      "url": "https://www.infojobs.com.br/vaga-de-desenvolvedor-plenosenior-pythonnodereact-em-sao-paulo__12015414.aspx",
-      "seniority": "mid",
-      "first_seen_at": "2026-10-31T04:46:31.390110Z",
-      "last_seen_at": "2026-10-31T04:46:31.390110Z",
-      "active": true
-    },
-    ...
-  ],
-  "total": 5,
-  "page": 1,
-  "size": 2,
-  "pages": 3
-}
-```
+![Swagger UI response of GET /jobs?q=python&size=1: one Infojobs job, "Dev Python Plsr / AI Engineer", with total 5 and pages 5](docs/images/swagger-search-jobs.png)
 
-Every collection is recorded with per-source and per-term results (two of the 24 shown):
+`GET /collection-runs` keeps the run history with its totals. `GET /collection-runs/{run_id}` adds the 24 per source and term results shown in the scheduler output above.
 
-```console
-$ curl "http://localhost:8000/collection-runs/1"
-{
-  "id": 1,
-  "trigger": "startup",
-  "status": "success",
-  "started_at": "2026-10-31T04:45:22.121781Z",
-  "finished_at": "2026-10-31T04:46:31.390110Z",
-  "error": null,
-  "totals": { "new": 162, "seen_again": 298, "discarded": 1362 },
-  "results": [
-    { "source": "vagas", "term": "desenvolvedor", "status": "success", "pages": 1, "new": 6, "seen_again": 0, "discarded": 1, "error": null },
-    { "source": "infojobs", "term": "desenvolvedor", "status": "success", "pages": 15, "new": 152, "seen_again": 0, "discarded": 128, "error": null },
-    ...
-  ]
-}
-```
+![Swagger UI response of GET /collection-runs: run 1, trigger startup, status success, totals new 162, seen_again 298, discarded 1361](docs/images/swagger-collection-runs.png)
+
+### 4. Errors
 
 Errors share one shape:
 
@@ -83,6 +89,8 @@ $ curl "http://localhost:8000/jobs/999999"
 | `migrate` | Runs `alembic upgrade head` once and exits. |
 | `api` | Read-only FastAPI app (`GET /jobs`, `GET /collection-runs`, `GET /health`, interactive docs at `/docs`). |
 | `scheduler` | `take-jobs scheduler`: collects on a cron schedule and once at start when the store is empty or the last run is more than 24 hours old. |
+
+Stack: Python 3.13, FastAPI and Uvicorn, SQLAlchemy 2 (async, asyncpg) with Alembic, Scrapy, APScheduler, pydantic-settings, PostgreSQL 17, uv, and Docker Compose. Tests use pytest, testcontainers and pytest-socket; lint and format use Ruff and import-linter.
 
 The code is layered, and the dependency direction is enforced by `lint-imports` in CI:
 
@@ -227,6 +235,22 @@ Everything is configured through environment variables, and every key is optiona
 | `LOG_LEVEL` | `INFO` | Log level of all services. |
 
 **`DATABASE_URL` and `POSTGRES_*` are coupled.** `docker-compose.yml` passes `POSTGRES_*` to the `db` service and `DATABASE_URL` to the application services, but it does not build one from the other, so that every default equals `.env.example`. If you change `POSTGRES_USER`, `POSTGRES_PASSWORD` or `POSTGRES_DB` in `.env`, change `DATABASE_URL` to match. The development password is only meant for local use: set your own value in `.env` for anything exposed to a network.
+
+## Troubleshooting
+
+**`GET /jobs` returns `"total": 0` right after the start.** The first collection takes about a minute. Follow it with `docker compose logs -f scheduler`, or check `GET /collection-runs`: the run is `running` until it finishes.
+
+**Port 8000 is already in use.** Publish the API on another host port: `API_PORT=8001 docker compose up`.
+
+**No collection at start.** The scheduler logs `event=startup_collection_skipped reason=recent_run_exists` when a run finished in the last 24 hours, and `reason=disabled` when `SCRAPE_ON_START=false`. Run one by hand with `docker compose run --rm scheduler take-jobs collect`.
+
+**`take-jobs collect` exits with code `3`.** Another run is active (the message gives its id and start time). Wait for it, or watch it with `GET /collection-runs`.
+
+**A service stops with exit code `2`.** A configuration value is invalid. The message names the key; fix it in `.env`.
+
+**`GET /health` answers `503`, or the API cannot authenticate after you changed `POSTGRES_*`.** PostgreSQL applies `POSTGRES_*` only when it creates an empty data directory, so a volume created with the old values keeps them. Make `DATABASE_URL` match, or recreate the volume with `docker compose down -v` (this deletes the stored jobs).
+
+**Integration tests fail to start a container.** They run PostgreSQL 17 through testcontainers: start Docker before `uv run pytest`.
 
 ## v1 → v2
 
