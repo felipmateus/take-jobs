@@ -73,7 +73,7 @@ This task makes the portfolio evidence visible and checkable:
 - [x] UT-114 — SDD artifacts present.
 - [x] IT-014 — O5 query (a) 71.4 and (b) 100.0.
 - [ ] MAN-002 — O5 after 7 days (post-delivery).
-- [ ] MAN-004 — green CI on GitHub (after the user pushes).
+- [x] MAN-004 — green CI on GitHub: runs 41167708543 (push) and 41167722942 (pull request) on PR #1.
 - [x] MAN-005 — tag, README and artifacts check.
 
 ## Success Criteria
