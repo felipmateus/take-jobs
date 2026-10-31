@@ -13,6 +13,68 @@ When the stack is up, the first collection starts by itself. After a minute or s
 
 This is **v2**, a rebuild of the original Flask version (tag `v1`) with spec-driven development. See [v1 → v2](#v1--v2) for what changed and why, and [`docs/tasks/fastapi-refactor/`](docs/tasks/fastapi-refactor/) for the PRD, tech spec, ADRs, task files and review rounds.
 
+## Demo
+
+Captured from a local `docker compose up --build` on 2026-10-31. The startup collection finished in 1 min 09 s: all 24 source and term combinations succeeded, and it stored 162 relevant jobs out of about 1,800 listings scraped.
+
+![Swagger UI at http://localhost:8000/docs listing the jobs, collection runs and health endpoints](docs/images/swagger-ui.png)
+
+Search is accent-insensitive and paginated. `seniority` is classified from the title; `Pleno/Sênior` resolves to `mid`, because the left-most keyword wins.
+
+```console
+$ curl "http://localhost:8000/jobs?q=python&size=2"
+{
+  "items": [
+    {
+      "id": 122,
+      "title": "Desenvolvedor Pleno/Sênior (Python+Node+React)",
+      "company": "SPEED IO – SERVIÇOS ESPECIALIZADOS LTDA",
+      "location": "São Paulo - SP",
+      "description": "Estamos em busca de uma pessoa desenvolvedora com mentalidade hacker, curiosa e com forte capacidade de aprendizado rápido para integrar nosso time de...",
+      "published_label": "14 set",
+      "source": "infojobs",
+      "url": "https://www.infojobs.com.br/vaga-de-desenvolvedor-plenosenior-pythonnodereact-em-sao-paulo__12015414.aspx",
+      "seniority": "mid",
+      "first_seen_at": "2026-10-31T04:46:31.390110Z",
+      "last_seen_at": "2026-10-31T04:46:31.390110Z",
+      "active": true
+    },
+    ...
+  ],
+  "total": 5,
+  "page": 1,
+  "size": 2,
+  "pages": 3
+}
+```
+
+Every collection is recorded with per-source and per-term results (two of the 24 shown):
+
+```console
+$ curl "http://localhost:8000/collection-runs/1"
+{
+  "id": 1,
+  "trigger": "startup",
+  "status": "success",
+  "started_at": "2026-10-31T04:45:22.121781Z",
+  "finished_at": "2026-10-31T04:46:31.390110Z",
+  "error": null,
+  "totals": { "new": 162, "seen_again": 298, "discarded": 1362 },
+  "results": [
+    { "source": "vagas", "term": "desenvolvedor", "status": "success", "pages": 1, "new": 6, "seen_again": 0, "discarded": 1, "error": null },
+    { "source": "infojobs", "term": "desenvolvedor", "status": "success", "pages": 15, "new": 152, "seen_again": 0, "discarded": 128, "error": null },
+    ...
+  ]
+}
+```
+
+Errors share one shape:
+
+```console
+$ curl "http://localhost:8000/jobs/999999"
+{"error":{"code":"job_not_found","message":"Job 999999 was not found.","details":[]}}
+```
+
 ## Overview
 
 | Piece | What it does |
@@ -179,11 +241,11 @@ v1 (tag `v1`, commit `52018b3`) was a Flask app that scraped on demand and strea
 | The pipeline opens a MySQL connection per process, creates its own table and deduplicates by title alone: an in-memory set plus a `select ... where title = %s` (`src/sync_app/bots/takeJobs/takeJobs/pipelines.py`). Two different companies with the same title collapse into one job, and a job still listed is never marked as seen again. | Alembic migration `0001`, and an upsert by `(source, external_id)` that inserts new jobs, refreshes `last_seen_at` for the others and counts both. |
 | The model stores dates as strings and truncates descriptions to 80 characters. It searches with `lower(title) LIKE`, so it cannot use an index (`src/sync_app/models/jobs_models.py`). | Typed columns (`timestamptz`), a computed activity flag, and trigram indexes on unaccented text. p95 below 300 ms on 50,000 jobs (IT-011). |
 | The query endpoint has no validation or error contract, and `limit` has no upper bound (`src/sync_app/controllers/jobs_controller.py`). | Validated parameters (`size` up to 100), typed responses, one error shape, OpenAPI docs. |
-| Scrapers collect everything the site returns, regardless of relevance (`src/sync_app/bots/takeJobs/takeJobs/spiders/vagas.py`, `.../infojobs.py`). | A relevance policy (include and exclude keywords, whole-word matching) stored with seniority. In a sample of 50 stored jobs, 48 were development roles. |
+| Scrapers collect everything the site returns, regardless of relevance (`src/sync_app/bots/takeJobs/takeJobs/spiders/vagas.py`, `.../infojobs.py`). | A relevance policy (include and exclude keywords, whole-word matching) stored with seniority. In a sample of 50 stored jobs, 48 were development roles. A live review on 2026-10-31 found non-software "programador" roles (transport, CNC, laser cutting, embroidery) slipping through; after the exclude list grew, the 162 stored jobs had only a few borderline titles left. |
 | `debug=True`, `TESTING=True` and `SQLALCHEMY_ECHO` are on in the app itself, and scraping prints with `print` (`src/sync_app/app.py`, `.../spiders/vagas.py`). | Structured `key=value` logs with one `LOG_LEVEL`, and a health endpoint. |
 | About 100 packages pinned by `pip freeze`, including unrelated ones such as `pandas`, `numpy` and `pipenv`, on `python:3.10.6` as root (`src/sync_app/requirements.txt`, `src/sync_app/Dockerfile`). | `pyproject.toml` and a committed `uv.lock` with a few direct dependencies, `python:3.13-slim` and a non-root user (`Dockerfile`). |
 | Two apps, MVC folders mixed with the crawler, and runtime artifacts committed (`src/sync_app/bots/takeJobs/teste.json`, `src/sync_app/bots/takeJobs/.jobs.json.icloud`). | One package in layers (`domain`, `application`, `infrastructure`, `api`, `cli`), with the boundaries checked by `lint-imports`. |
-| No tests and no CI anywhere in v1. | About 400 tests (unit, integration on a real PostgreSQL, end to end) and a CI workflow (`.github/workflows/ci.yml`) running format, lint, `lint-imports` and `pytest` with an 80% coverage gate on the domain and application layers. |
+| No tests and no CI anywhere in v1. | About 500 tests (unit, integration on a real PostgreSQL, end to end) and a CI workflow (`.github/workflows/ci.yml`) running format, lint, `lint-imports` and `pytest` with an 80% coverage gate on the domain and application layers. |
 
 ### Evidence
 
