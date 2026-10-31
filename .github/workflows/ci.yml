@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history and tags: tests/static/test_repo.py checks the v1 tag
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Format
+        run: uv run ruff format --check
+
+      - name: Lint
+        run: uv run ruff check
+
+      - name: Architecture contracts
+        run: uv run lint-imports
+
+      - name: Tests (coverage gate 80%)
+        # Docker is available on ubuntu-latest, so the testcontainers PostgreSQL tests run here.
+        run: uv run pytest --cov=take_jobs.domain --cov=take_jobs.application --cov-fail-under=80

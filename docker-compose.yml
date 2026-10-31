@@ -1,0 +1,78 @@
+# `docker compose up --build` starts everything. No .env is needed: every key falls back to the
+# default after `-` (no colon, so a key set to an empty value in .env reaches the application as
+# empty). Copy .env.example to .env to override.
+
+x-app-environment: &app-environment
+  DATABASE_URL: "${DATABASE_URL-postgresql+asyncpg://take_jobs:take_jobs_dev@db:5432/take_jobs}"
+  SCRAPE_CRON: "${SCRAPE_CRON-0 6 * * *}"
+  SCRAPE_TIMEZONE: "${SCRAPE_TIMEZONE-America/Sao_Paulo}"
+  SCRAPE_ON_START: "${SCRAPE_ON_START-true}"
+  SCRAPE_RUN_TIMEOUT_MINUTES: "${SCRAPE_RUN_TIMEOUT_MINUTES-60}"
+  SCRAPE_TERMS: "${SCRAPE_TERMS-desenvolvedor,programador,engenheiro de software,desenvolvedor backend,desenvolvedor frontend,desenvolvedor full stack,desenvolvedor mobile,desenvolvedor python,desenvolvedor java,desenvolvedor javascript,desenvolvedor .net,desenvolvedor php}"
+  SCRAPE_MAX_PAGES: "${SCRAPE_MAX_PAGES-20}"
+  SCRAPE_DOWNLOAD_DELAY: "${SCRAPE_DOWNLOAD_DELAY-1.0}"
+  SCRAPE_USER_AGENT: "${SCRAPE_USER_AGENT-take-jobs/2.0 (+https://github.com/felipmateus/take-jobs)}"
+  RELEVANCE_INCLUDE_KEYWORDS: "${RELEVANCE_INCLUDE_KEYWORDS-desenvolvedor,desenvolvedora,developer,programador,programadora,programmer,engenheiro de software,engenheira de software,software engineer,dev,backend,back-end,frontend,front-end,full stack,fullstack,full-stack}"
+  RELEVANCE_EXCLUDE_KEYWORDS: "${RELEVANCE_EXCLUDE_KEYWORDS-cnc,torno,usinagem,producao,pcp,manutencao,negocios,vendas,comercial,textil,moda,costura}"
+  JOB_INACTIVE_AFTER_DAYS: "${JOB_INACTIVE_AFTER_DAYS-7}"
+  LOG_LEVEL: "${LOG_LEVEL-INFO}"
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER-take_jobs}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD-take_jobs_dev}"
+      POSTGRES_DB: "${POSTGRES_DB-take_jobs}"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `$$` makes the container's shell expand the variables, not Compose.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *app-environment
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    command:
+      - uvicorn
+      - --factory
+      - take_jobs.api.app:create_app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    environment:
+      <<: *app-environment
+    ports:
+      - "${API_PORT-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  scheduler:
+    build: .
+    command: ["take-jobs", "scheduler"]
+    environment:
+      <<: *app-environment
+    init: true
+    stop_grace_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  pgdata:
