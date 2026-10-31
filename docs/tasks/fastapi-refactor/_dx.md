@@ -323,7 +323,7 @@ SCRAPE_USER_AGENT=take-jobs/2.0 (+https://github.com/felipmateus/take-jobs)
 
 # Relevance filter (comma-separated; case- and accent-insensitive whole words/phrases).
 RELEVANCE_INCLUDE_KEYWORDS=desenvolvedor,desenvolvedora,developer,programador,programadora,programmer,engenheiro de software,engenheira de software,software engineer,dev,backend,back-end,frontend,front-end,full stack,fullstack,full-stack
-RELEVANCE_EXCLUDE_KEYWORDS=cnc,torno,usinagem,producao,pcp,manutencao,negocios,vendas,comercial,textil,moda,costura
+RELEVANCE_EXCLUDE_KEYWORDS=cnc,torno,usinagem,producao,pcp,manutencao,negocios,vendas,comercial,textil,moda,costura,transporte,transportes,cargas,programador de logistica,laser,plasma,puncionadeira,dobradeira,corte,dobra,comando numerico,materiais,programador visual,programador de servicos,programador operacional,rotas,frota,mao de obra,nesting,bordado,cad,injetora,eletricista,clp,plc,bordados,fornecedores,carteira de clientes,vendedor,vendedora,programador de ligacao
 
 # Job lifecycle.
 JOB_INACTIVE_AFTER_DAYS=7
