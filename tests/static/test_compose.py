@@ -32,6 +32,17 @@ def test_ut110_db_healthcheck_and_no_ports(compose: dict) -> None:
     assert "pgdata" in compose["volumes"]
 
 
+def test_ut110_api_healthcheck_probes_health(compose: dict) -> None:
+    healthcheck = compose["services"]["api"]["healthcheck"]
+
+    assert healthcheck["test"][:3] == ["CMD", "python", "-c"]
+    assert "http://127.0.0.1:8000/health" in healthcheck["test"][3]
+    assert healthcheck["interval"] == "10s"
+    assert healthcheck["timeout"] == "5s"
+    assert healthcheck["retries"] == 3
+    assert healthcheck["start_period"] == "10s"
+
+
 def test_ut110_startup_ordering(compose: dict) -> None:
     services = compose["services"]
 

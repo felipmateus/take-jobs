@@ -87,7 +87,7 @@ $ curl "http://localhost:8000/jobs/999999"
 | --- | --- |
 | `db` | PostgreSQL 17 (not published to the host). |
 | `migrate` | Runs `alembic upgrade head` once and exits. |
-| `api` | Read-only FastAPI app (`GET /jobs`, `GET /collection-runs`, `GET /health`, interactive docs at `/docs`). |
+| `api` | Read-only FastAPI app (`GET /jobs`, `GET /collection-runs`, `GET /health`, interactive docs at `/docs`). Its Compose healthcheck calls `/health`, so `docker compose ps` shows it `unhealthy` while the database is unreachable. |
 | `scheduler` | `take-jobs scheduler`: collects on a cron schedule and once at start when the store is empty or the last run is more than 24 hours old. |
 
 Stack: Python 3.13, FastAPI and Uvicorn, SQLAlchemy 2 (async, asyncpg) with Alembic, Scrapy, APScheduler, pydantic-settings, PostgreSQL 17, uv, and Docker Compose. Tests use pytest, testcontainers and pytest-socket; lint and format use Ruff and import-linter.
