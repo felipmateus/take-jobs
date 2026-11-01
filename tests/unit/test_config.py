@@ -74,7 +74,7 @@ def test_ut020_defaults_with_empty_environment() -> None:
     assert "full-stack" in settings.relevance_include_keywords
     assert len(settings.relevance_include_keywords) == 17
     assert settings.relevance_exclude_keywords[0] == "cnc"
-    assert len(settings.relevance_exclude_keywords) == 12
+    assert len(settings.relevance_exclude_keywords) == 43
 
 
 def test_ut021_list_is_split_stripped_and_drops_empties(monkeypatch: pytest.MonkeyPatch) -> None:

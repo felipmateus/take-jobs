@@ -293,7 +293,7 @@ The MVP is the whole PRD, because every FR is in scope and the slices below are 
 | --- | --- | --- | --- |
 | `db` | `postgres:17`, volume `pgdata`, `environment:` `POSTGRES_USER: ${POSTGRES_USER-take_jobs}` etc. | — | healthcheck `["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]`. The `$$` makes the container's shell expand the variables instead of Compose (review round 2, issue 003). Interval 5 s, timeout 3 s, retries 12; **no `ports:`** |
 | `migrate` | app image, `alembic upgrade head` | `db: condition: service_healthy` | `restart: "no"` |
-| `api` | app image, `uvicorn --factory take_jobs.api.app:create_app --host 0.0.0.0 --port 8000` | `migrate: condition: service_completed_successfully` | `ports: ["${API_PORT-8000}:8000"]`, `restart: unless-stopped` |
+| `api` | app image, `uvicorn --factory take_jobs.api.app:create_app --host 0.0.0.0 --port 8000` | `migrate: condition: service_completed_successfully` | `ports: ["${API_PORT-8000}:8000"]`, `restart: unless-stopped`; healthcheck `python -c "urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"` (no curl in the slim image; a `503` fails it). Interval 10 s, timeout 5 s, retries 3, start period 10 s |
 | `scheduler` | app image, `take-jobs scheduler` | `migrate: condition: service_completed_successfully` | `init: true`, `stop_grace_period: 30s`, `restart: unless-stopped` |
 
 No `env_file:`. Every application key is listed under each service's `environment:` as `${KEY-default}` (Config Lifecycle). Compose reads the project's `.env`, when present, for interpolation.

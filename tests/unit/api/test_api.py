@@ -11,6 +11,7 @@ import pytest
 from fastapi import Depends
 from sqlalchemy.exc import InterfaceError, OperationalError
 
+from take_jobs.api.app import create_app
 from take_jobs.api.dependencies import get_session, get_settings
 from take_jobs.application.errors import (
     CollectionRunNotFoundError,
@@ -20,6 +21,7 @@ from take_jobs.application.errors import (
 from take_jobs.config import Settings
 from take_jobs.domain.models import RunStatus, RunTotals, Seniority
 from take_jobs.infrastructure.scraping.registry import SOURCES
+from tests.support.logs import bare_root_logger
 from tests.unit.api.conftest import Rig, make_job, make_run
 
 JOB_KEYS = {
@@ -414,6 +416,20 @@ def test_settings_come_from_the_app_not_from_a_process_global(
             return {"days": settings.job_inactive_after_days}
 
     assert [rig.client().get("/probe-settings").json()["days"] for rig in rigs] == [3, 9]
+
+
+def test_create_app_logs_key_value_lines_at_log_level(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Under uvicorn the root logger has no handlers, so without this the API's own warnings
+    # would reach stderr bare (logging's last resort) and LOG_LEVEL would change nothing.
+    with bare_root_logger() as root:
+        create_app(Settings(_env_file=None, log_level="DEBUG"))
+        logging.getLogger("take_jobs.api").debug("event=api_debug_probe")
+
+        assert root.level == logging.DEBUG
+
+    assert capsys.readouterr().err == "level=DEBUG event=api_debug_probe\n"
 
 
 class FakeEngine:

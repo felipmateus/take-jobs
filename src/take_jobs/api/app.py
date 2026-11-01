@@ -10,6 +10,7 @@ from take_jobs.api.routers import health, jobs, runs
 from take_jobs.config import Settings
 from take_jobs.infrastructure.db.session import make_engine, make_sessionmaker
 from take_jobs.infrastructure.scraping.registry import SOURCES, SourceDefinition
+from take_jobs.log import configure_logging
 
 
 @asynccontextmanager
@@ -35,6 +36,7 @@ def create_app(
         lifespan=_lifespan,
     )
     app.state.settings = settings if settings is not None else Settings()
+    configure_logging(app.state.settings.log_level)
     app.state.sources = sources if sources is not None else SOURCES
     register_error_handlers(app)
     app.include_router(jobs.build_router(sorted(app.state.sources)))

@@ -54,6 +54,53 @@ def test_ut003_to_ut008_default_relevance(
     assert default_policy.is_relevant(title) is expected
 
 
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        # Non-software "programador" roles seen in a live collection (2026-10-31).
+        ("Programador De Transportes", False),
+        ("Programador Operacional - TRANSPORTE DE CARGAS Itajaí/SC", False),
+        ("Programador De Cargas - Tora Logística", False),
+        ("Programador De Logística", False),
+        ("Programador E Operador De Máquina A Laser", False),
+        ("Programador De Corte Laser/Plasma", False),
+        ("Programador De Puncionadeira", False),
+        ("OP. E PROGRAMADOR DE DOBRADEIRA", False),
+        ("Programador - Corte E Dobra", False),
+        ("Operador E Programador De Máquina Comando Numérico ROMI", False),
+        ("Programador De Materiais", False),
+        ("Programador Visual - Teresópolis / RJ", False),
+        ("PROGRAMADOR DE SERVIÇOS - COI- Vaga Noturna", False),
+        ("Programador Operacional", False),
+        ("Programador De Rotas", False),
+        ("PROGRAMADOR DE FROTA", False),
+        ("PROGRAMADOR MAO DE OBRA - BELO HORIZONTE - MG", False),
+        ("Programador De Nesting", False),
+        ("Programador De Bordado", False),
+        ("Programador CAD/CAM Jr", False),
+        ("Programador - DE INJETORA", False),
+        ("Programador - Eletricista", False),
+        ("PROGRAMADOR CLP", False),
+        ("Programador - PLC Mitsubishi", False),
+        ("Programador De Bordados", False),
+        ("COMPRADOR(A) PLENO (DESENVOLVEDOR DE FORNECEDORES) - LICITAÇÕES", False),
+        ("Desenvolvedor(A) De Carteira De Clientes", False),
+        ("Vendedor(A)/Desenvolvedor (A) On Trade (Bares E Restaurantes)", False),
+        ("ANALISTA DE BACKOFFICE III - Programador De Ligação", False),
+        # The phrases above must not catch software roles.
+        ("Desenvolvedor Visual Basic", True),
+        ("Desenvolvedor Full Stack - Sistemas de Logística", True),
+        ("Programador .NET - Transportadora", True),
+        ("Programador C# (Junior / Pleno)", True),
+        ("Analista Programador Pleno", True),
+    ],
+)
+def test_default_relevance_excludes_non_software_programador_roles(
+    default_policy: RelevancePolicy, title: str, expected: bool
+) -> None:
+    assert default_policy.is_relevant(title) is expected
+
+
 def test_ut009_empty_include_is_rejected() -> None:
     with pytest.raises(ValueError, match="include keywords must not be empty"):
         RelevancePolicy(include=[], exclude=["cnc"])

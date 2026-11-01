@@ -6,7 +6,6 @@ live in `take_jobs.cli.deps` and are re-exported here, as `_spec.md` names them.
 """
 
 import argparse
-import logging
 import sys
 from collections.abc import Sequence
 
@@ -17,6 +16,7 @@ from take_jobs.cli.deps import CliDeps, build_cli_deps
 from take_jobs.cli.scheduler import run_scheduler
 from take_jobs.config import Settings
 from take_jobs.domain.models import RunTrigger
+from take_jobs.log import configure_logging
 
 __all__ = ["CliDeps", "build_cli_deps", "main"]
 
@@ -79,7 +79,7 @@ def _load_deps() -> CliDeps | None:
         for line in _configuration_lines(error):
             print(line, file=sys.stderr)
         return None
-    logging.basicConfig(level=settings.log_level, format="level=%(levelname)s %(message)s")
+    configure_logging(settings.log_level)
     return build_cli_deps(settings)
 
 

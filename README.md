@@ -13,14 +13,84 @@ When the stack is up, the first collection starts by itself. After a minute or s
 
 This is **v2**, a rebuild of the original Flask version (tag `v1`) with spec-driven development. See [v1 → v2](#v1--v2) for what changed and why, and [`docs/tasks/fastapi-refactor/`](docs/tasks/fastapi-refactor/) for the PRD, tech spec, ADRs, task files and review rounds.
 
+## Contents
+
+- [Key features](#key-features)
+- [Demo](#demo)
+- [Overview](#overview)
+- [Running](#running)
+- [Querying the API](#querying-the-api)
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
+- [v1 → v2](#v1--v2)
+
+## Key features
+
+- **Daily collection, no setup.** One `docker compose up --build` starts PostgreSQL, the migrations, the API and a cron scheduler. The first collection runs at start when the store is empty.
+- **Only relevant jobs.** Every title goes through include and exclude keywords, so a "programador CNC" or a sales role never reaches the store.
+- **Seniority from the title.** `intern`, `junior`, `mid` or `senior`, ready to filter on.
+- **Fast, forgiving search.** Case and accent insensitive text search over title, company and description, backed by trigram indexes (p95 below 300 ms on 50,000 jobs).
+- **Auditable runs.** Every collection is stored with one result per source and search term, so a partial failure is visible instead of silent.
+- **Safe by construction.** A read-only API, a single active run enforced by the database, no secret in the repository, and about 500 tests in CI.
+
+## Demo
+
+Captured from a local `docker compose up --build` on an empty volume on 2026-10-31. The startup collection finished in 1 min 07 s: all 24 source and term combinations succeeded, and it stored 162 relevant jobs out of about 1,800 listings scraped.
+
+### 1. The collection
+
+The scheduler prints one line per source and term, then the run summary. Most of the listings are discarded by the relevance policy: the "programador" term on vagas.com alone returned 775 non-software titles.
+
+```bash
+docker compose logs scheduler --no-log-prefix
+```
+
+![Scheduler output of the startup collection: 24 source and term lines, all ok, ending with "Collection run 1 finished: success in 1m07s (new=162, seen_again=298, discarded=1361)"](docs/images/collection-run-terminal.png)
+
+### 2. Searching the jobs
+
+Filters combine freely. Here, senior developer roles, one per line:
+
+```bash
+curl -s "localhost:8000/jobs?q=desenvolvedor&seniority=senior&size=8" \
+  | jq -r '.items[] | "\(.source)  \(.title | .[:60] | . + " " * (62 - length))\(.location)"'
+```
+
+![Terminal listing eight senior developer jobs from Infojobs with their locations, then the total of 162 stored jobs](docs/images/search-terminal.png)
+
+### 3. The interactive docs
+
+Every route is documented and can be tried at <http://localhost:8000/docs>.
+
+![Swagger UI at http://localhost:8000/docs listing the jobs, collection runs and health endpoints](docs/images/swagger-ui.png)
+
+`GET /jobs?q=python&size=1` from **Try it out**. Search is accent-insensitive and paginated, and `seniority` is `null` when the title names no level. A title such as `Pleno/Sênior` resolves to `mid`, because the left-most keyword wins.
+
+![Swagger UI response of GET /jobs?q=python&size=1: one Infojobs job, "Dev Python Plsr / AI Engineer", with total 5 and pages 5](docs/images/swagger-search-jobs.png)
+
+`GET /collection-runs` keeps the run history with its totals. `GET /collection-runs/{run_id}` adds the 24 per source and term results shown in the scheduler output above.
+
+![Swagger UI response of GET /collection-runs: run 1, trigger startup, status success, totals new 162, seen_again 298, discarded 1361](docs/images/swagger-collection-runs.png)
+
+### 4. Errors
+
+Errors share one shape:
+
+```console
+$ curl "http://localhost:8000/jobs/999999"
+{"error":{"code":"job_not_found","message":"Job 999999 was not found.","details":[]}}
+```
+
 ## Overview
 
 | Piece | What it does |
 | --- | --- |
 | `db` | PostgreSQL 17 (not published to the host). |
 | `migrate` | Runs `alembic upgrade head` once and exits. |
-| `api` | Read-only FastAPI app (`GET /jobs`, `GET /collection-runs`, `GET /health`, interactive docs at `/docs`). |
+| `api` | Read-only FastAPI app (`GET /jobs`, `GET /collection-runs`, `GET /health`, interactive docs at `/docs`). Its Compose healthcheck calls `/health`, so `docker compose ps` shows it `unhealthy` while the database is unreachable. |
 | `scheduler` | `take-jobs scheduler`: collects on a cron schedule and once at start when the store is empty or the last run is more than 24 hours old. |
+
+Stack: Python 3.13, FastAPI and Uvicorn, SQLAlchemy 2 (async, asyncpg) with Alembic, Scrapy, APScheduler, pydantic-settings, PostgreSQL 17, uv, and Docker Compose. Tests use pytest, testcontainers and pytest-socket; lint and format use Ruff and import-linter.
 
 The code is layered, and the dependency direction is enforced by `lint-imports` in CI:
 
@@ -166,6 +236,22 @@ Everything is configured through environment variables, and every key is optiona
 
 **`DATABASE_URL` and `POSTGRES_*` are coupled.** `docker-compose.yml` passes `POSTGRES_*` to the `db` service and `DATABASE_URL` to the application services, but it does not build one from the other, so that every default equals `.env.example`. If you change `POSTGRES_USER`, `POSTGRES_PASSWORD` or `POSTGRES_DB` in `.env`, change `DATABASE_URL` to match. The development password is only meant for local use: set your own value in `.env` for anything exposed to a network.
 
+## Troubleshooting
+
+**`GET /jobs` returns `"total": 0` right after the start.** The first collection takes about a minute. Follow it with `docker compose logs -f scheduler`, or check `GET /collection-runs`: the run is `running` until it finishes.
+
+**Port 8000 is already in use.** Publish the API on another host port: `API_PORT=8001 docker compose up`.
+
+**No collection at start.** The scheduler logs `event=startup_collection_skipped reason=recent_run_exists` when a run finished in the last 24 hours, and `reason=disabled` when `SCRAPE_ON_START=false`. Run one by hand with `docker compose run --rm scheduler take-jobs collect`.
+
+**`take-jobs collect` exits with code `3`.** Another run is active (the message gives its id and start time). Wait for it, or watch it with `GET /collection-runs`.
+
+**A service stops with exit code `2`.** A configuration value is invalid. The message names the key; fix it in `.env`.
+
+**`GET /health` answers `503`, or the API cannot authenticate after you changed `POSTGRES_*`.** PostgreSQL applies `POSTGRES_*` only when it creates an empty data directory, so a volume created with the old values keeps them. Make `DATABASE_URL` match, or recreate the volume with `docker compose down -v` (this deletes the stored jobs).
+
+**Integration tests fail to start a container.** They run PostgreSQL 17 through testcontainers: start Docker before `uv run pytest`.
+
 ## v1 → v2
 
 v1 (tag `v1`, commit `52018b3`) was a Flask app that scraped on demand and streamed items over a WebSocket. v2 is a rebuild from a PRD and a tech spec (`docs/tasks/fastapi-refactor/`). Compare the two with `git diff v1 HEAD --stat`, or browse v1 with `git show v1:src/sync_app/app.py`.
@@ -179,11 +265,11 @@ v1 (tag `v1`, commit `52018b3`) was a Flask app that scraped on demand and strea
 | The pipeline opens a MySQL connection per process, creates its own table and deduplicates by title alone: an in-memory set plus a `select ... where title = %s` (`src/sync_app/bots/takeJobs/takeJobs/pipelines.py`). Two different companies with the same title collapse into one job, and a job still listed is never marked as seen again. | Alembic migration `0001`, and an upsert by `(source, external_id)` that inserts new jobs, refreshes `last_seen_at` for the others and counts both. |
 | The model stores dates as strings and truncates descriptions to 80 characters. It searches with `lower(title) LIKE`, so it cannot use an index (`src/sync_app/models/jobs_models.py`). | Typed columns (`timestamptz`), a computed activity flag, and trigram indexes on unaccented text. p95 below 300 ms on 50,000 jobs (IT-011). |
 | The query endpoint has no validation or error contract, and `limit` has no upper bound (`src/sync_app/controllers/jobs_controller.py`). | Validated parameters (`size` up to 100), typed responses, one error shape, OpenAPI docs. |
-| Scrapers collect everything the site returns, regardless of relevance (`src/sync_app/bots/takeJobs/takeJobs/spiders/vagas.py`, `.../infojobs.py`). | A relevance policy (include and exclude keywords, whole-word matching) stored with seniority. In a sample of 50 stored jobs, 48 were development roles. |
+| Scrapers collect everything the site returns, regardless of relevance (`src/sync_app/bots/takeJobs/takeJobs/spiders/vagas.py`, `.../infojobs.py`). | A relevance policy (include and exclude keywords, whole-word matching) stored with seniority. In a sample of 50 stored jobs, 48 were development roles. A live review on 2026-10-31 found non-software "programador" roles (transport, CNC, laser cutting, embroidery) slipping through; after the exclude list grew, the 162 stored jobs had only a few borderline titles left. |
 | `debug=True`, `TESTING=True` and `SQLALCHEMY_ECHO` are on in the app itself, and scraping prints with `print` (`src/sync_app/app.py`, `.../spiders/vagas.py`). | Structured `key=value` logs with one `LOG_LEVEL`, and a health endpoint. |
 | About 100 packages pinned by `pip freeze`, including unrelated ones such as `pandas`, `numpy` and `pipenv`, on `python:3.10.6` as root (`src/sync_app/requirements.txt`, `src/sync_app/Dockerfile`). | `pyproject.toml` and a committed `uv.lock` with a few direct dependencies, `python:3.13-slim` and a non-root user (`Dockerfile`). |
 | Two apps, MVC folders mixed with the crawler, and runtime artifacts committed (`src/sync_app/bots/takeJobs/teste.json`, `src/sync_app/bots/takeJobs/.jobs.json.icloud`). | One package in layers (`domain`, `application`, `infrastructure`, `api`, `cli`), with the boundaries checked by `lint-imports`. |
-| No tests and no CI anywhere in v1. | About 400 tests (unit, integration on a real PostgreSQL, end to end) and a CI workflow (`.github/workflows/ci.yml`) running format, lint, `lint-imports` and `pytest` with an 80% coverage gate on the domain and application layers. |
+| No tests and no CI anywhere in v1. | About 500 tests (unit, integration on a real PostgreSQL, end to end) and a CI workflow (`.github/workflows/ci.yml`) running format, lint, `lint-imports` and `pytest` with an 80% coverage gate on the domain and application layers. |
 
 ### Evidence
 
